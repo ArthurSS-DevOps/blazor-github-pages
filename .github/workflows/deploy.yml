@@ -1,0 +1,75 @@
+name: Deploy Blazor WebAssembly to GitHub Pages
+
+on:
+  push:
+    branches:
+      - Aula4
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WebAssembly build tools
+        run: dotnet workload install wasm-tools
+
+      - name: Restore dependencies
+        run: dotnet restore ScreenSound.WebAssembly/ScreenSound.WebAssembly.csproj
+
+      - name: Publish Blazor WebAssembly
+        run: dotnet publish ScreenSound.WebAssembly/ScreenSound.WebAssembly.csproj --configuration Release --no-restore --output publish
+
+      - name: Configure GitHub Pages base path and API URL
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [[ -z "$API_BASE_URL" ]]; then
+            echo "::error::Configure the API_BASE_URL repository variable with the public HTTPS URL of the ScreenSound API."
+            exit 1
+          fi
+
+          if [[ "$API_BASE_URL" != https://* ]]; then
+            echo "::error::API_BASE_URL must use HTTPS."
+            exit 1
+          fi
+
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          sed -i "s|<base href=\"/\" />|<base href=\"/${REPO_NAME}/\" />|" publish/wwwroot/index.html
+          cp publish/wwwroot/index.html publish/wwwroot/404.html
+          jq --arg apiUrl "$API_BASE_URL" '.APIServer = $apiUrl' \
+            publish/wwwroot/appsettings.json > publish/wwwroot/appsettings.tmp
+          mv publish/wwwroot/appsettings.tmp publish/wwwroot/appsettings.json
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: publish/wwwroot
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
